@@ -1,6 +1,7 @@
 streamlit
 numpy
 pandas
+matplotlib
 scipy
 shapely
 ezdxf
