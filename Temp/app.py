@@ -13,8 +13,8 @@ import io
 
 # Thiết lập giao diện hiển thị cho Web App
 st.set_page_config(page_title="Darvis TIN Interactive App", layout="wide")
-st.title("🗺️ Ứng Dụng Tương Tác Đường Bao - Darvis TIN (Từng Bước)")
-st.markdown("Hệ thống hỗ trợ nạp dữ liệu, loại bỏ điểm trùng lặp, dựng lưới TIN và **cho phép bạn phê duyệt/chọn từng đỉnh ranh giới**.")
+st.title("🗺️ Ứng Dụng Tương Tác Đường Bao - Darvis TIN (Bản Đánh Số Tam Giác)")
+st.markdown("Hệ thống hỗ trợ nạp dữ liệu, loại bỏ điểm trùng lặp, dựng lưới TIN và **đánh số trực tiếp lên tam giác liên quan** để bạn duyệt ranh giới.")
 
 # Khởi tạo các biến nhớ lưu trạng thái tương tác của người dùng (Session State)
 if 'manual_boundary' not in st.session_state:
@@ -165,7 +165,7 @@ else:
         with col_ui2:
             st.markdown("**Quản lý tam giác lỗi / ngoài ranh:**")
             if adjacent_tri_indices:
-                tri_to_ignore = st.selectbox("Chọn tam giác TIN muốn loại bỏ:", adjacent_tri_indices, format_func=lambda i: f"Tam giác #{i} {tri_mesh.simplices[i]}")
+                tri_to_ignore = st.selectbox("Chọn Mã số Tam giác muốn loại bỏ:", adjacent_tri_indices, format_func=lambda i: f"Tam giác số #{i}")
                 if st.button("❌ Loại bỏ tam giác này khỏi lưới", use_container_width=True):
                     st.session_state.ignored_triangles.add(tri_to_ignore)
                     st.rerun()
@@ -188,39 +188,49 @@ else:
             p_len, p_area = get_polygon_properties(pts_2d[st.session_state.manual_boundary])
             st.markdown(f"📊 **Thông số hiện hành:** Chiều dài chu vi: `{p_len:.2f} m` | Diện tích ranh giới: `{p_area:.2f} m²`")
 
-        # --- DỰNG BIỂU ĐỒ HÌNH HỌC TRỰC QUAN ---
-        fig, ax = plt.subplots(figsize=(10, 6.5))
+        # --- DỰNG BIỂU ĐỒ HÌNH HỌC TRỰC QUAN TỔNG THỂ ---
+        fig, ax = plt.subplots(figsize=(11, 7.5))
         
-        # Vẽ các tam giác nền, tô màu vàng nhạt các tam giác kề (Tập T) để duyệt ranh giới
+        # 1. Vẽ toàn bộ mạng lưới tổng thể và xử lý tô màu vàng cho tam giác liên quan
         for idx, simplex in enumerate(tri_mesh.simplices):
             if idx in st.session_state.ignored_triangles:
                 continue
+            
             if idx in adjacent_tri_indices:
-                polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1, alpha=0.7, label='Tam giác kề (Tập T)' if 'Tam giác kề (Tập T)' not in ax.get_legend_handles_labels() else "")
+                # Tô màu vàng và tạo viền rõ ràng cho tam giác liên quan trực tiếp đến điểm chủ
+                polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1.2, alpha=0.85)
                 ax.add_patch(polygon)
+                
+                # ĐÁNH SỐ TẠM LÊN TÂM TAM GIÁC: Tính toán tọa độ trọng tâm (Centroid) để viết chữ số hiệu
+                centroid_x = np.mean(pts_2d[simplex, 0])
+                centroid_y = np.mean(pts_2d[simplex, 1])
+                ax.text(centroid_x, centroid_y, f"#{idx}", fontsize=9, color='#B45F06', fontweight='bold',
+                        ha='center', va='center', bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#D6B656', alpha=0.9))
             else:
-                ax.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#E5E5E5', linewidth=0.7, linestyle='--')
+                # Hiện khung đồ họa tổng thể của các tam giác còn lại bằng nét đứt màu xám
+                ax.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#D3D3D3', linewidth=0.6, linestyle='--')
 
-        # Biểu diễn các chấm tọa độ phẳng
+        # 2. Biểu diễn các chấm tọa độ phẳng của điểm khảo sát
         ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=25, zorder=3)
-        # Viết nhãn Text nhãn cao độ thực tế và ký hiệu số thứ tự đỉnh lên màn hình
+        
+        # Viết nhãn Text nhãn cao độ thực tế Z và ký hiệu số thứ tự đỉnh (#idx) lên đồ thị
         for idx, p in enumerate(pts):
-            ax.text(p[0] + 0.2, p[1] + 0.2, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=7, color='#4A4A4A', zorder=4)
+            ax.text(p[0] + 0.15, p[1] + 0.15, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=7.5, color='#333333', zorder=4)
 
-        # Vẽ đường ranh giới đang xác định từng bước
+        # 3. Vẽ đường ranh giới đang xác định từng bước (Màu đỏ đậm)
         if len(st.session_state.manual_boundary) > 0:
             active_idx = st.session_state.manual_boundary
-            ax.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=2.5, marker='o', zorder=5, label='Đường bao Darvis TIN')
+            ax.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=2.5, marker='o', zorder=5)
             # Ngôi sao màu vàng đánh dấu điểm xuất phát Xmin
-            ax.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=130, marker='*', edgecolors='black', zorder=6, label='Khởi phát Xmin')
-            # Điểm tròn màu xanh lá đánh dấu điểm chủ hiện tại đang chọn
-            ax.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=80, edgecolors='black', zorder=6, label='Điểm chủ hiện tại')
+            ax.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=140, marker='*', edgecolors='black', zorder=6, label='Khởi phát Xmin')
+            # Điểm tròn màu xanh lá đánh dấu điểm chủ hiện tại đang đứng duyệt
+            ax.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=90, edgecolors='black', zorder=6, label='Điểm chủ hiện tại')
 
-        ax.set_title("Mô hình hình học tương tác từng bước (Darvis TIN)", fontsize=11, fontweight='bold')
+        ax.set_title("Khung đồ họa tổng thể lưới TIN và tập tam giác duyệt biên (Darvis TIN)", fontsize=11, fontweight='bold')
         ax.grid(True, linestyle=':', alpha=0.4)
         ax.legend(loc="lower right")
         
-        # Đồng bộ tỉ lệ trục bản vẽ CAD, triệt tiêu lỗi chính tả datalim cũ
+        # Đồng bộ tỉ lệ trục bản vẽ, đảm bảo hình không bị bóp méo sai lệch thực tế
         ax.set_aspect('equal', adjustable='datalim')
         st.pyplot(fig)
 
