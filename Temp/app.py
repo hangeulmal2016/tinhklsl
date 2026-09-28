@@ -13,8 +13,8 @@ import io
 
 # Thiết lập giao diện hiển thị cho Web App
 st.set_page_config(page_title="Darvis TIN Interactive App", layout="wide")
-st.title("🗺️ Ứng Dụng Tương Tác Đường Bao - Darvis TIN (Bản Đánh Số Tam Giác)")
-st.markdown("Hệ thống hỗ trợ nạp dữ liệu, loại bỏ điểm trùng lặp, dựng lưới TIN và **đánh số trực tiếp lên tam giác liên quan** để bạn duyệt ranh giới.")
+st.title("🗺️ Ứng Dụng Tương Tác Đường Bao - Darvis TIN (Bản Sửa Lưới & Số To)")
+st.markdown("Hệ thống hiển thị **khung đồ họa tổng thể lưới TIN** và **đánh số tam giác to gấp 3 lần** để bạn dễ dàng phê duyệt.")
 
 # Khởi tạo các biến nhớ lưu trạng thái tương tác của người dùng (Session State)
 if 'manual_boundary' not in st.session_state:
@@ -37,7 +37,6 @@ def parse_txt_data(text_content):
                 points.append((x, y, z))
             except ValueError:
                 continue
-    # Loại bỏ điểm thừa trùng lặp (Duplicate Elimination) bằng Pandas
     df_pts = pd.DataFrame(points, columns=['x', 'y', 'z']).drop_duplicates(subset=['x', 'y'])
     return df_pts.to_numpy()
 
@@ -76,11 +75,9 @@ def generate_cad_dxf(points, boundary_indices):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     
-    # Tạo lớp (Layer) bản vẽ kỹ thuật kèm mã màu chuẩn
     doc.layers.add(name='CAODO', color=3)     # Lớp chữ nhãn cao độ - Màu xanh lá
     doc.layers.add(name='BOUNDARY', color=1)  # Lớp nét polyline biên ranh giới - Màu đỏ
     
-    # Ghi nhãn chữ text cao độ lên bản vẽ
     for p in points:
         msp.add_text(
             text=f"{p[2]:.3f}",
@@ -92,10 +89,8 @@ def generate_cad_dxf(points, boundary_indices):
             }
         )
         
-    # Tạo đường đa tuyến khép kín (Closed Polyline) nối chu vi ranh giới Darvis TIN
     if len(boundary_indices) > 2:
         poly_points = [(points[idx][0], points[idx][1]) for idx in boundary_indices]
-        # Thêm flag=1 để định dạng đường Polyline dạng Closed khép kín hoàn toàn trong CAD
         msp.add_lwpolyline(points=poly_points, dxfattribs={'layer': 'BOUNDARY', 'flags': 1})
         
     out_stream = io.StringIO()
@@ -106,14 +101,13 @@ st.sidebar.header("⚙️ Nạp Dữ Liệu Đầu Vào")
 upload_mode = st.sidebar.selectbox("Định dạng file:", ["File tọa độ văn bản (.TXT)", "File bản vẽ CAD (.DXF)"])
 uploaded_file = st.sidebar.file_uploader("Tải tệp hình học của bạn lên đây để tính toán", type=["txt", "dxf"])
 
-# Nếu người dùng thay đổi tệp dữ liệu khác, tự động xóa bộ nhớ đệm tương tác cũ
 if uploaded_file is not None and uploaded_file.name != st.session_state.current_file_name:
     st.session_state.current_file_name = uploaded_file.name
     st.session_state.manual_boundary = []
     st.session_state.ignored_triangles = set()
 
 if uploaded_file is None:
-    st.info("👋 Chào mừng bạn đến với công cụ Darvis TIN! Vui lòng tải lên file dữ liệu (.TXT hoặc .DXF) ở thanh công cụ bên trái (Sidebar) để bắt đầu tự động xác định đường bao chu vi.")
+    st.info("👋 Vui lòng tải lên file dữ liệu (.TXT hoặc .DXF) ở thanh công cụ bên trái để bắt đầu hiển thị mô hình.")
 else:
     file_bytes = uploaded_file.read()
     if "DXF" in upload_mode:
@@ -126,13 +120,11 @@ else:
         tri_mesh = Delaunay(pts_2d)
         x_min_idx = int(np.argmin(pts_2d[:, 0]))
 
-        # Đặt điểm cực tây Xmin làm điểm xuất phát đầu tiên của ranh giới
         if not st.session_state.manual_boundary:
             st.session_state.manual_boundary = [x_min_idx]
 
         curr_pivot = st.session_state.manual_boundary[-1]
 
-        # Khóa dữ liệu và trích xuất tập T (các đỉnh tam giác kề trực tiếp với điểm chủ hiện tại)
         adjacent_tri_indices = []
         adjacent_nodes = set()
         for idx, simplex in enumerate(tri_mesh.simplices):
@@ -144,7 +136,6 @@ else:
                     if node != curr_pivot:
                         adjacent_nodes.add(int(node))
 
-        # --- GIAO DIỆN PHÊ DUYỆT TỪNG BƯỚC ---
         st.subheader("🕹️ Bảng Điều Khiển Từng Đỉnh Ranh Giới (Darvis TIN)")
         col_ui1, col_ui2, col_ui3 = st.columns(3)
         
@@ -156,7 +147,7 @@ else:
             if st.button("👉 Xác nhận đỉnh này thuộc Boundary", use_container_width=True):
                 if next_chosen_node == x_min_idx and len(st.session_state.manual_boundary) > 2:
                     st.session_state.manual_boundary.append(int(next_chosen_node))
-                    st.success("🎉 Đường bao Darvis TIN đã khép mạch khép kín thành công!")
+                    st.success("🎉 Đường bao Darvis TIN đã khép mạch thành công!")
                 elif next_chosen_node not in st.session_state.manual_boundary:
                     st.session_state.manual_boundary.append(int(next_chosen_node))
                     st.rerun()
@@ -183,58 +174,51 @@ else:
                 st.session_state.ignored_triangles = set()
                 st.rerun()
 
-        # Tính toán thông số ranh giới theo thời gian thực (Real-time Metric)
         if len(st.session_state.manual_boundary) >= 3:
             p_len, p_area = get_polygon_properties(pts_2d[st.session_state.manual_boundary])
             st.markdown(f"📊 **Thông số hiện hành:** Chiều dài chu vi: `{p_len:.2f} m` | Diện tích ranh giới: `{p_area:.2f} m²`")
 
-        # --- DỰNG BIỂU ĐỒ HÌNH HỌC TRỰC QUAN TỔNG THỂ ---
-        fig, ax = plt.subplots(figsize=(11, 7.5))
+        # --- ĐÃ SỬA: ĐẢM BẢO HIỂN THỊ ĐẦY ĐỦ KHUNG LƯỚI TỔNG THỂ VÀ CHỮ TO ---
+        fig, ax = plt.subplots(figsize=(12, 8))
         
-        # 1. Vẽ toàn bộ mạng lưới tổng thể và xử lý tô màu vàng cho tam giác liên quan
+        # Bước 1: Vẽ toàn bộ khung lưới xám trước để làm nền tổng thể (không bị sót tam giác nào)
         for idx, simplex in enumerate(tri_mesh.simplices):
             if idx in st.session_state.ignored_triangles:
                 continue
+            ax.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#D3D3D3', linewidth=0.6, linestyle='--', zorder=1)
             
-            if idx in adjacent_tri_indices:
-                # Tô màu vàng và tạo viền rõ ràng cho tam giác liên quan trực tiếp đến điểm chủ
-                polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1.2, alpha=0.85)
-                ax.add_patch(polygon)
-                
-                # ĐÁNH SỐ TẠM LÊN TÂM TAM GIÁC: Tính toán tọa độ trọng tâm (Centroid) để viết chữ số hiệu
-                centroid_x = np.mean(pts_2d[simplex, 0])
-                centroid_y = np.mean(pts_2d[simplex, 1])
-                ax.text(centroid_x, centroid_y, f"#{idx}", fontsize=9, color='#B45F06', fontweight='bold',
-                        ha='center', va='center', bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#D6B656', alpha=0.9))
-            else:
-                # Hiện khung đồ họa tổng thể của các tam giác còn lại bằng nét đứt màu xám
-                ax.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#D3D3D3', linewidth=0.6, linestyle='--')
+        # Bước 2: Vẽ đè và tô màu vàng cho các tam giác kề liên quan, đánh số to x3
+        for idx in adjacent_tri_indices:
+            simplex = tri_mesh.simplices[idx]
+            polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1.5, alpha=0.9, zorder=2)
+            ax.add_patch(polygon)
+            
+            # ĐÃ ĐIỀU CHỈNH: Đánh số to gấp 3 lần (fontsize=24) và màu đỏ đậm để cực kỳ dễ đọc
+            centroid_x = np.mean(pts_2d[simplex, 0])
+            centroid_y = np.mean(pts_2d[simplex, 1])
+            ax.text(centroid_x, centroid_y, f"#{idx}", fontsize=24, color='#CC0000', fontweight='bold',
+                    ha='center', va='center', zorder=3,
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#CC0000', alpha=0.9))
 
-        # 2. Biểu diễn các chấm tọa độ phẳng của điểm khảo sát
-        ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=25, zorder=3)
-        
-        # Viết nhãn Text nhãn cao độ thực tế Z và ký hiệu số thứ tự đỉnh (#idx) lên đồ thị
+        # Bước 3: Vẽ các chấm tọa độ điểm trắc địa
+        ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=30, zorder=4)
         for idx, p in enumerate(pts):
-            ax.text(p[0] + 0.15, p[1] + 0.15, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=7.5, color='#333333', zorder=4)
+            ax.text(p[0] + 0.15, p[1] + 0.15, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=8, color='#333333', zorder=5)
 
-        # 3. Vẽ đường ranh giới đang xác định từng bước (Màu đỏ đậm)
+        # Bước 4: Vẽ tuyến đường bao đang được chọn
         if len(st.session_state.manual_boundary) > 0:
             active_idx = st.session_state.manual_boundary
-            ax.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=2.5, marker='o', zorder=5)
-            # Ngôi sao màu vàng đánh dấu điểm xuất phát Xmin
-            ax.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=140, marker='*', edgecolors='black', zorder=6, label='Khởi phát Xmin')
-            # Điểm tròn màu xanh lá đánh dấu điểm chủ hiện tại đang đứng duyệt
-            ax.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=90, edgecolors='black', zorder=6, label='Điểm chủ hiện tại')
+            ax.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=3, marker='o', zorder=6)
+            ax.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=160, marker='*', edgecolors='black', zorder=7, label='Khởi phát Xmin')
+            ax.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=100, edgecolors='black', zorder=7, label='Điểm chủ hiện tại')
 
-        ax.set_title("Khung đồ họa tổng thể lưới TIN và tập tam giác duyệt biên (Darvis TIN)", fontsize=11, fontweight='bold')
+        ax.set_title("Mô hình đồ họa tổng thể lưới TIN và tập tam giác duyệt biên (Darvis TIN)", fontsize=12, fontweight='bold')
         ax.grid(True, linestyle=':', alpha=0.4)
         ax.legend(loc="lower right")
-        
-        # Đồng bộ tỉ lệ trục bản vẽ, đảm bảo hình không bị bóp méo sai lệch thực tế
         ax.set_aspect('equal', adjustable='datalim')
         st.pyplot(fig)
 
-        # --- KẾT XUẤT VÀ TẢI FILE DXF TRỰC TIẾP ---
+        # --- KẾT XUẤT CAD ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("💾 Tải Bản Vẽ Kiểm Tra")
         dxf_output_raw = generate_cad_dxf(pts, st.session_state.manual_boundary)
@@ -246,4 +230,4 @@ else:
             use_container_width=True
         )
     else:
-        st.error("❌ Tệp dữ liệu khảo sát không hợp lệ hoặc số lượng điểm tọa độ ít hơn 3.")
+        st.error("❌ Tệp dữ liệu khảo sát không chứa đủ 3 điểm tọa độ.")
