@@ -3,136 +3,183 @@ import ezdxf
 import pandas as pd
 import numpy as np
 import io
+from scipy.spatial import Delaunay
 
-st.set_page_config(page_title="Trắc Địa Cực Trị App", layout="wide", page_icon="📐")
+# Cấu hình giao diện Streamlit Cloud
+st.set_page_config(page_title="TIN & Boundary Trắc Địa App", layout="wide", page_icon="📐")
 
-st.title("📐 Ứng Dụng Dựng Hình Cực Trị & Đoạn Thẳng AB")
-st.markdown("Xử lý dữ liệu trắc địa lớn, tìm tọa độ giới hạn ($X_{min}, X_{max}$) và xuất file DXF.")
+st.title("📐 Web App Tạo Lưới TIN & Tìm Đường Chu Vi Trắc Địa")
+st.markdown("Xử lý tệp dữ liệu lớn (>10.000 dòng). Tự động phân tích cấu trúc cấu phần địa vật và xuất file DXF.")
 
-# Khởi tạo bộ nhớ tạm
-if 'survey_data' not in st.session_state:
-    st.session_state.survey_data = None
+# Khởi tạo bộ nhớ dữ liệu tạm trong session state
+if 'survey_df' not in st.session_state:
+    st.session_state.survey_df = None
 
-st.sidebar.header("📁 Tải tệp dữ liệu")
-uploaded_file = st.sidebar.file_uploader("Chọn file TXT hoặc DXF", type=["txt", "dxf"])
+st.sidebar.header("📁 Tải tệp số liệu trắc địa")
+uploaded_file = st.sidebar.file_uploader("Chọn file dữ liệu gốc (TXT hoặc DXF)", type=["txt", "dxf"])
 
 def parse_txt_large(file_bytes):
+    """Đọc dữ liệu file TXT trắc địa định dạng X, Y, Z hiệu năng cao bằng Pandas"""
     data = io.BytesIO(file_bytes)
     df = pd.read_csv(data, sep=r'[,\s\t]+', engine='python', header=None)
-    # Xử lý linh hoạt số lượng cột dữ liệu đầu vào
-    if df.shape[1] >= 4:
+    
+    # Chuẩn hóa nếu có thêm cột tên điểm ở đầu
+    if df.shape >= 4:
         df = df.iloc[:, 1:4]
-    elif df.shape[1] == 2:
-        df[2] = 0.0 # Bổ sung cột Z nếu file chỉ có X, Y
+    elif df.shape == 2:
+        df = 0.0  # Bổ sung cao độ mặc định nếu chỉ có X, Y
+        
     df.columns = ['X', 'Y', 'Z']
     df['X'] = pd.to_numeric(df['X'], errors='coerce')
     df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
     df['Z'] = pd.to_numeric(df['Z'], errors='coerce').fillna(0.0)
     return df.dropna(subset=['X', 'Y'])
 
-# Đọc file dữ liệu đầu vào
+def compute_tin_and_boundary(df):
+    """Tính toán lưới tam giác TIN (Delaunay) và thuật toán dò đường chu vi Boundary"""
+    points_2d = df[['X', 'Y']].to_numpy()
+    points_3d = df[['X', 'Y', 'Z']].to_numpy()
+    
+    # 1. Tạo lưới tam giác TIN
+    tri = Delaunay(points_2d)
+    
+    # 2. Thuật toán lọc các cạnh ranh giới ngoài cùng (cạnh chỉ thuộc 1 tam giác)
+    edges = {}
+    for simplex in tri.simplices:
+        for i in range(3):
+            edge = tuple(sorted((simplex[i], simplex[(i+1)%3])))
+            edges[edge] = edges.get(edge, 0) + 1
+            
+    boundary_edges = [edge for edge, count in edges.items() if count == 1]
+    
+    # Xây dựng bản đồ kề (adjacency list) phục vụ dò đường bao liên tục
+    adjacency = {}
+    for u, v in boundary_edges:
+        adjacency.setdefault(u, []).append(v)
+        adjacency.setdefault(v, []).append(u)
+        
+    # 3. Dò chuỗi điểm liên tục bắt đầu từ Xmin
+    xmin_idx = np.argmin(points_2d[:, 0])
+    
+    boundary_indices = [xmin_idx]
+    current = xmin_idx
+    # Lấy điểm đầu tiên trong danh sách kết nối kề
+    prev = adjacency[current][0]
+    
+    # Lặp tuần tự qua topo lưới cho tới khi khép kín vòng tròn tại Xmin
+    max_iter = len(boundary_edges)
+    iterations = 0
+    
+    while prev != xmin_idx and iterations < max_iter:
+        boundary_indices.append(prev)
+        next_nodes = adjacency[prev]
+        # Tìm điểm kế tiếp chưa trùng với hướng đi ngược lại vừa qua
+        next_node = next_nodes[0] if next_nodes[0] != current else next_nodes[1]
+        
+        current = prev
+        prev = next_node
+        iterations += 1
+        
+    boundary_indices.append(xmin_idx) # Ép khép kín
+    
+    boundary_points = points_3d[boundary_indices]
+    
+    return tri.simplices, boundary_points
+
+# Xử lý tệp dữ liệu đầu vào
 if uploaded_file is not None:
     file_bytes = uploaded_file.read()
     file_ext = uploaded_file.name.split('.')[-1].lower()
     
-    with st.spinner("🔄 Đang quét dữ liệu hình học..."):
+    with st.spinner("🔄 Hệ thống đang xử lý cấu trúc lưới hình học..."):
         try:
             if file_ext == 'txt':
-                st.session_state.survey_data = parse_txt_large(file_bytes)
+                st.session_state.survey_df = parse_txt_large(file_bytes)
             elif file_ext == 'dxf':
                 stream = io.StringIO(file_bytes.decode('utf-8', errors='ignore'))
                 doc = ezdxf.read(stream)
                 points_list = [p.dxf.location for p in doc.modelspace().query('POINT')]
                 if points_list:
-                    st.session_state.survey_data = pd.DataFrame(points_list, columns=['X', 'Y', 'Z'])
+                    st.session_state.survey_df = pd.DataFrame(points_list, columns=['X', 'Y', 'Z'])
                 else:
-                    st.sidebar.error("Không tìm thấy điểm POINT nào trong file DXF.")
+                    st.sidebar.error("Không tìm thấy điểm POINT nào trong file DXF gốc.")
         except Exception as e:
-            st.sidebar.error(f"Lỗi cấu trúc tệp tin: {e}")
+            st.sidebar.error(f"Lỗi phân tích tệp: {e}")
 
-# Xử lý tính toán hình học theo phương án mới
-if st.session_state.survey_data is not None:
-    df = st.session_state.survey_data
+# Tiến hành render và xuất bản vẽ hình học
+if st.session_state.survey_df is not None:
+    df = st.session_state.survey_df
+    points_3d = df[['X', 'Y', 'Z']].to_numpy()
     
-    # 1. Tìm các điểm cực trị Xmin, Xmax
-    idx_min_x = df['X'].idxmin()
-    idx_max_x = df['X'].idxmax()
+    st.success(f"✅ Đã tải và xử lý thành công {len(df):,} điểm dữ liệu trắc địa!")
     
-    pt_X1 = df.loc[idx_min_x].to_dict() # Điểm X1 (Xmin)
-    pt_X2 = df.loc[idx_max_x].to_dict() # Điểm X2 (Xmax)
-    
-    # 2. Dựng tọa độ điểm A và điểm B theo quy tắc toán học yêu cầu
-    pt_A = {'X': pt_X2['X'], 'Y': pt_X1['Y'], 'Z': 0.0}
-    pt_B = {'X': pt_X1['X'], 'Y': pt_X2['Y'], 'Z': 0.0}
-    
-    st.success(f"📊 Phân tích thành công {len(df):,} hàng dữ liệu!")
-    
-    # Hiển thị thông số tọa độ tính toán
-    st.subheader("📍 Tọa độ các điểm mục tiêu xác định")
-    geo_data = {
-        "Điểm": ["X1 (Xmin)", "X2 (Xmax)", "Điểm A (Xmax, Y_X1)", "Điểm B (Xmin, Y_X2)"],
-        "Tọa độ X": [pt_X1['X'], pt_X2['X'], pt_A['X'], pt_B['X']],
-        "Tọa độ Y": [pt_X1['Y'], pt_X2['Y'], pt_A['Y'], pt_B['Y']],
-        "Cao độ Z": [pt_X1['Z'], pt_X2['Z'], pt_A['Z'], pt_B['Z']]
-    }
-    st.table(pd.DataFrame(geo_data))
+    # Tính toán lưới hình học chuyên sâu
+    simplices, boundary_points = compute_tin_and_boundary(df)
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("📈 Bản đồ biểu diễn đồ họa trực quan")
-        # Chuẩn bị dữ liệu hiển thị hình học trực quan
-        chart_df = pd.DataFrame([
-            {"Tên": "X1", "X": pt_X1['X'], "Y": pt_X1['Y'], "Loại": "Điểm Cực Trị"},
-            {"Tên": "X2", "X": pt_X2['X'], "Y": pt_X2['Y'], "Loại": "Điểm Cực Trị"},
-            {"Tên": "Đoạn AB - Đầu A", "X": pt_A['X'], "Y": pt_A['Y'], "Loại": "Đoạn Thẳng AB"},
-            {"Tên": "Đoạn AB - Đầu B", "X": pt_B['X'], "Y": pt_B['Y'], "Loại": "Đoạn Thẳng AB"}
-        ])
-        st.scatter_chart(chart_df, x='X', y='Y', color='Loại', size=200)
+        st.subheader("📈 Bản đồ hiển thị tổng quan ranh giới")
+        # Bản đồ Preview nhanh các điểm bao ngoài
+        df_boundary = pd.DataFrame(boundary_points, columns=['X', 'Y', 'Z'])
+        st.line_chart(df_boundary, x='X', y='Y')
         
     with col2:
-        st.subheader("📥 Cấu hình xuất tệp DXF")
+        st.subheader("📋 Bảng thống kê thông số lớp hình học")
+        st.metric("Tổng số điểm (POINT & TEXT)", f"{len(df):,}")
+        st.metric("Số tam giác mặt lưới TIN", f"{len(simplices):,}")
+        st.metric("Số điểm thuộc đường chu vi (BOUNDARY)", f"{len(boundary_points)-1:,}")
+
+    st.markdown("---")
+    st.subheader("📥 Trích xuất Bản vẽ AutoCAD kỹ thuật (.DXF)")
+    
+    # Khởi tạo tệp DXF mới phiên bản chuẩn AutoCAD
+    doc_out = ezdxf.new("R2010")
+    msp_out = doc_out.modelspace()
+    
+    # 🗂️ 1. Khởi tạo và gán mã màu cho các Layers theo quy chuẩn trắc địa
+    doc_out.layers.new(name="TRAC_DIA_DIEM", dxfattribs={"color": 2})   # Màu Vàng (Yellow)
+    doc_out.layers.new(name="TRAC_DIA_LUOI_TIN", dxfattribs={"color": 8})# Màu Xám tối (Dark Gray)
+    doc_out.layers.new(name="TRAC_DIA_RANH_GIOI", dxfattribs={"color": 1})# Màu Đỏ (Red - Nổi bật)
+    
+    # 🖊️ 2. Xuất cấu phần: LAYER ĐIỂM (Gồm POINT + TEXT Cao độ Z)
+    for p in points_3d:
+        # Xuất thực thể POINT 3D
+        msp_out.add_point((p[0], p[1], p[2]), dxfattribs={"layer": "TRAC_DIA_DIEM"})
+        # Xuất thực thể TEXT hiển thị trị số cao độ Z lên bản vẽ bên cạnh điểm (offset nhẹ sang phải)
+        elevation_str = f"{p[2]:.2f}"
+        msp_out.add_text(
+            elevation_str, 
+            dxfattribs={"layer": "TRAC_DIA_DIEM", "height": 0.25}
+        ).set_placement((p[0] + 0.2, p[1] + 0.2, p[2]))
         
-        # Thiết lập bản vẽ CAD mới thông qua ezdxf
-        doc_out = ezdxf.new("R2010")
-        msp_out = doc_out.modelspace()
+    # 🖊️ 3. Xuất cấu phần: LAYER LƯỚI TIN (Các cạnh tam giác không giao nhau)
+    for simplex in simplices:
+        p1, p2, p3 = points_3d[simplex[0]], points_3d[simplex[1]], points_3d[simplex[2]]
+        # Vẽ chu vi tam giác rỗng khép kín bằng các đoạn thẳng LINE 3D
+        msp_out.add_line((p1[0], p1[1], p1[2]), (p2[0], p2[1], p2[2]), dxfattribs={"layer": "TRAC_DIA_LUOI_TIN"})
+        msp_out.add_line((p2[0], p2[1], p2[2]), (p3[0], p3[1], p3[2]), dxfattribs={"layer": "TRAC_DIA_LUOI_TIN"})
+        msp_out.add_line((p3[0], p3[1], p3[2]), (p1[0], p1[1], p1[2]), dxfattribs={"layer": "TRAC_DIA_LUOI_TIN"})
         
-        # Khởi tạo các Layer phân tách màu sắc trong AutoCAD
-        doc_out.layers.new(name="DIEM_CUC_TRI", dxfattribs={"color": 1}) # Màu đỏ
-        doc_out.layers.new(name="DOAN_THANG_AB", dxfattribs={"color": 3}) # Màu xanh lá
-        
-        # Thực hiện vẽ đối tượng hình học vào file DXF
-        # 1. Vẽ điểm X1 và X2 dạng TEXT/POINT định vị
-        msp_out.add_point((pt_X1['X'], pt_X1['Y'], pt_X1['Z']), dxfattribs={"layer": "DIEM_CUC_TRI"})
-        msp_out.add_text("X1", dxfattribs={"layer": "DIEM_CUC_TRI"}).set_placement((pt_X1['X'], pt_X1['Y'], pt_X1['Z']))
-        
-        msp_out.add_point((pt_X2['X'], pt_X2['Y'], pt_X2['Z']), dxfattribs={"layer": "DIEM_CUC_TRI"})
-        msp_out.add_text("X2", dxfattribs={"layer": "DIEM_CUC_TRI"}).set_placement((pt_X2['X'], pt_X2['Y'], pt_X2['Z']))
-        
-        # 2. Vẽ đoạn thẳng AB nối liền hình học
-        msp_out.add_line(
-            (pt_A['X'], pt_A['Y'], pt_A['Z']), 
-            (pt_B['X'], pt_B['Y'], pt_B['Z']), 
-            dxfattribs={"layer": "DOAN_THANG_AB"}
-        )
-        msp_out.add_text("A", dxfattribs={"layer": "DOAN_THANG_AB"}).set_placement((pt_A['X'], pt_A['Y'], pt_A['Z']))
-        msp_out.add_text("B", dxfattribs={"layer": "DOAN_THANG_AB"}).set_placement((pt_B['X'], pt_B['Y'], pt_B['Z']))
-        
-        # Chuyển dữ liệu CAD thành bộ nhớ đệm luồng tải về máy
-        out_stream = io.StringIO()
-        doc_out.write(out_stream)
-        dxf_string = out_stream.getvalue()
-        
-        st.write("Bản vẽ DXF sẽ bao gồm:")
-        st.markdown("- **Layer DIEM_CUC_TRI**: Điểm X1, X2 kèm text nhãn.")
-        st.markdown("- **Layer DOAN_THANG_AB**: Đường nối thẳng từ điểm A đến B.")
-        
-        st.download_button(
-            label="⚡ Tải xuống file DXF hình học",
-            data=dxf_string,
-            file_name="hinh_hoc_cuc_tri.dxf",
-            mime="application/dxf",
-            use_container_width=True
-        )
+    # 🖊️ 4. Xuất cấu phần: LAYER ĐƯỜNG BOUNDARY (Đường đa tuyến 3D khép kín)
+    # Sử dụng add_polyline3d để bao toàn vẹn cao độ trắc địa thực tế của địa hình thửa
+    msp_out.add_polyline3d(
+        [(pt[0], pt[1], pt[2]) for pt in boundary_points], 
+        dxfattribs={"closed": True, "layer": "TRAC_DIA_RANH_GIOI"}
+    )
+    
+    # Chuyển đổi luồng byte tải về trực tiếp không lưu ổ cứng trung gian
+    out_stream = io.StringIO()
+    doc_out.write(out_stream)
+    dxf_string = out_stream.getvalue()
+    
+    st.info("Bản vẽ xuất ra đã phân tách hoàn chỉnh 3 Layer: `TRAC_DIA_DIEM`, `TRAC_DIA_LUOI_TIN`, và `TRAC_DIA_RANH_GIOI`.")
+    st.download_button(
+        label="⚡ Tải xuống file DXF (TIN & Boundary 3D)",
+        data=dxf_string,
+        file_name="tin_boundary_output.dxf",
+        mime="application/dxf",
+        use_container_width=True
+    )
 else:
-    st.info("💡 Vui lòng tải tệp trắc địa (.TXT/.DXF) ở thanh menu trái để bắt đầu thuật toán tìm điểm cực trị và dựng đoạn thẳng AB.")
+    st.info("💡 Vui lòng tải file dữ liệu ở thanh bên trái để hệ thống tự động sinh lưới TIN và dò đường bao.")
