@@ -134,9 +134,9 @@ def generate_cad_dxf(points, boundary_indices):
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     
-    # Thiết lập Layer đặc trưng theo đúng chuẩn kỹ thuật
-    doc.layers.new(name='CAODO', color=3)     # Nhãn Text chữ màu Xanh Lá
-    doc.layers.new(name='BOUNDARY', color=1)  # Đường Polyline biên màu Đỏ
+    # ĐÃ FIX: SỬ DỤNG HÀM .add() ĐỂ TẠO LAYER THEO ĐÚNG CHUẨN CỦA EZDXF
+    doc.layers.add(name='CAODO', color=3)     # Nhãn Text chữ màu Xanh Lá
+    doc.layers.add(name='BOUNDARY', color=1)  # Đường Polyline biên màu Đỏ
     
     # Ghi nhãn chữ cao độ Z của điểm lên bản vẽ
     for p in points:
