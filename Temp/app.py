@@ -11,10 +11,10 @@ from scipy.spatial import Delaunay
 import ezdxf
 import io
 
-# Thiết lập giao diện hiển thị cho Web App
-st.set_page_config(page_title="Darvis TIN Interactive App", layout="wide")
-st.title("🗺️ Ứng Dụng Tương Tác Đường Bao - Darvis TIN (Bản Sửa Lưới & Số To)")
-st.markdown("Hệ thống hiển thị **khung đồ họa tổng thể lưới TIN** và **đánh số tam giác to gấp 3 lần** để bạn dễ dàng phê duyệt.")
+# Thiết lập giao diện hiển thị cho Web App tối ưu cho Mobile
+st.set_page_config(page_title="Darvis TIN Mobile App", layout="centered")
+st.title("🗺️ Ứng Dụng Darvis TIN (Giao Diện Di Động)")
+st.markdown("Cấu trúc xếp chồng **Khung tổng thể** và **Khung cục bộ** giúp xem trực quan, rõ ràng trên màn hình điện thoại.")
 
 # Khởi tạo các biến nhớ lưu trạng thái tương tác của người dùng (Session State)
 if 'manual_boundary' not in st.session_state:
@@ -107,7 +107,7 @@ if uploaded_file is not None and uploaded_file.name != st.session_state.current_
     st.session_state.ignored_triangles = set()
 
 if uploaded_file is None:
-    st.info("👋 Vui lòng tải lên file dữ liệu (.TXT hoặc .DXF) ở thanh công cụ bên trái để bắt đầu hiển thị mô hình.")
+    st.info("👋 Vui lòng tải lên file dữ liệu (.TXT hoặc .DXF) ở thanh công cụ bên trái (Sidebar) để bắt đầu hiển thị mô hình.")
 else:
     file_bytes = uploaded_file.read()
     if "DXF" in upload_mode:
@@ -136,87 +136,113 @@ else:
                     if node != curr_pivot:
                         adjacent_nodes.add(int(node))
 
-        st.subheader("🕹️ Bảng Điều Khiển Từng Đỉnh Ranh Giới (Darvis TIN)")
-        col_ui1, col_ui2, col_ui3 = st.columns(3)
+        # --- BẢNG ĐIỀU KHIỂN ĐƯỢC THIẾT KẾ CO GIÃN THEO CHIỀU DỌC ĐIỆN THOẠI ---
+        st.subheader("🕹️ Bảng Điều Khiển Ranh Giới")
         
-        with col_ui1:
-            st.markdown(f"**Điểm chủ hiện thời:** Đỉnh `#{curr_pivot}` (X: {pts[curr_pivot][0]:.2f}, Y: {pts[curr_pivot][1]:.2f})")
-            available_options = sorted(list(adjacent_nodes))
-            next_chosen_node = st.selectbox("Chọn đỉnh tiếp theo nằm trên Boundary:", available_options)
-            
-            if st.button("👉 Xác nhận đỉnh này thuộc Boundary", use_container_width=True):
-                if next_chosen_node == x_min_idx and len(st.session_state.manual_boundary) > 2:
-                    st.session_state.manual_boundary.append(int(next_chosen_node))
-                    st.success("🎉 Đường bao Darvis TIN đã khép mạch thành công!")
-                elif next_chosen_node not in st.session_state.manual_boundary:
-                    st.session_state.manual_boundary.append(int(next_chosen_node))
-                    st.rerun()
-                else:
-                    st.warning("Đỉnh này đã tồn tại trong chuỗi ranh giới trước đó.")
-        with col_ui2:
-            st.markdown("**Quản lý tam giác lỗi / ngoài ranh:**")
-            if adjacent_tri_indices:
-                tri_to_ignore = st.selectbox("Chọn Mã số Tam giác muốn loại bỏ:", adjacent_tri_indices, format_func=lambda i: f"Tam giác số #{i}")
-                if st.button("❌ Loại bỏ tam giác này khỏi lưới", use_container_width=True):
-                    st.session_state.ignored_triangles.add(tri_to_ignore)
-                    st.rerun()
+        st.markdown(f"📍 **Điểm chủ hiện tại:** Đỉnh `#{curr_pivot}` (X: {pts[curr_pivot][0]:.2f}, Y: {pts[curr_pivot][1]:.2f})")
+        
+        available_options = sorted(list(adjacent_nodes))
+        next_chosen_node = st.selectbox("Chọn đỉnh tiếp theo nằm trên Boundary:", available_options)
+        
+        if st.button("👉 Xác nhận đỉnh này thuộc Boundary", use_container_width=True):
+            if next_chosen_node == x_min_idx and len(st.session_state.manual_boundary) > 2:
+                st.session_state.manual_boundary.append(int(next_chosen_node))
+                st.success("🎉 Đường bao Darvis TIN đã khép mạch thành công!")
+            elif next_chosen_node not in st.session_state.manual_boundary:
+                st.session_state.manual_boundary.append(int(next_chosen_node))
+                st.rerun()
             else:
-                st.write("Không tìm thấy tam giác nào quanh đỉnh hiện tại.")
+                st.warning("Đỉnh này đã tồn tại trong chuỗi ranh giới trước đó.")
+        if adjacent_tri_indices:
+            tri_to_ignore = st.selectbox("Chọn Mã số Tam giác muốn loại bỏ khỏi lưới:", adjacent_tri_indices, format_func=lambda i: f"Tam giác số #{i}")
+            if st.button("❌ Loại bỏ tam giác này khỏi lưới", use_container_width=True):
+                st.session_state.ignored_triangles.add(tri_to_ignore)
+                st.rerun()
+        else:
+            st.write("Không tìm thấy tam giác nào quanh đỉnh hiện tại.")
 
-        with col_ui3:
-            st.markdown("**Thao tác chỉnh sửa luồng:**")
-            if st.button("⏪ Quay lại đỉnh trước đó (Undo)", use_container_width=True):
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("⏪ Quay lại (Undo)", use_container_width=True):
                 if len(st.session_state.manual_boundary) > 1:
                     st.session_state.manual_boundary.pop()
                     st.rerun()
-            if st.button("🔄 Khởi động lại từ đầu (Reset)", use_container_width=True):
+        with col_btn2:
+            if st.button("🔄 Làm lại (Reset)", use_container_width=True):
                 st.session_state.manual_boundary = [x_min_idx]
                 st.session_state.ignored_triangles = set()
                 st.rerun()
 
         if len(st.session_state.manual_boundary) >= 3:
             p_len, p_area = get_polygon_properties(pts_2d[st.session_state.manual_boundary])
-            st.markdown(f"📊 **Thông số hiện hành:** Chiều dài chu vi: `{p_len:.2f} m` | Diện tích ranh giới: `{p_area:.2f} m²`")
+            st.markdown(f"📊 **Thông số phẳng:** Chu vi: `{p_len:.2f} m` | Diện tích: `{p_area:.2f} m²`")
 
-        # --- ĐÃ SỬA: ĐẢM BẢO HIỂN THỊ ĐẦY ĐỦ KHUNG LƯỚI TỔNG THỂ VÀ CHỮ TO ---
-        fig, ax = plt.subplots(figsize=(12, 8))
+        st.markdown("---")
         
-        # Bước 1: Vẽ toàn bộ khung lưới xám trước để làm nền tổng thể (không bị sót tam giác nào)
+        # ----------------------------------------------------
+        # KHUNG ĐỒ HỌA 1 (PHÍA TRÊN): BẢN ĐỒ TỔNG THỂ LƯỚI TIN
+        # ----------------------------------------------------
+        st.subheader("🌐 1. Khung Đồ Họa Tổng Thể Lưới TIN")
+        fig1, ax1 = plt.subplots(figsize=(8, 6))
+        
+        # Vẽ toàn bộ lưới TIN nền dạng nét liền màu xám rõ ràng
         for idx, simplex in enumerate(tri_mesh.simplices):
             if idx in st.session_state.ignored_triangles:
                 continue
-            ax.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#D3D3D3', linewidth=0.6, linestyle='--', zorder=1)
+            ax1.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#B0B0B0', linewidth=0.9, linestyle='-', zorder=1)
             
-        # Bước 2: Vẽ đè và tô màu vàng cho các tam giác kề liên quan, đánh số to x3
-        for idx in adjacent_tri_indices:
-            simplex = tri_mesh.simplices[idx]
-            polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1.5, alpha=0.9, zorder=2)
-            ax.add_patch(polygon)
-            
-            # ĐÃ ĐIỀU CHỈNH: Đánh số to gấp 3 lần (fontsize=24) và màu đỏ đậm để cực kỳ dễ đọc
-            centroid_x = np.mean(pts_2d[simplex, 0])
-            centroid_y = np.mean(pts_2d[simplex, 1])
-            ax.text(centroid_x, centroid_y, f"#{idx}", fontsize=24, color='#CC0000', fontweight='bold',
-                    ha='center', va='center', zorder=3,
-                    bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#CC0000', alpha=0.9))
-
-        # Bước 3: Vẽ các chấm tọa độ điểm trắc địa
-        ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=30, zorder=4)
-        for idx, p in enumerate(pts):
-            ax.text(p[0] + 0.15, p[1] + 0.15, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=8, color='#333333', zorder=5)
-
-        # Bước 4: Vẽ tuyến đường bao đang được chọn
+        # Điểm trắc địa
+        ax1.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=25, zorder=2)
+        
+        # Tuyến đường bao đang được vẽ
         if len(st.session_state.manual_boundary) > 0:
             active_idx = st.session_state.manual_boundary
-            ax.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=3, marker='o', zorder=6)
-            ax.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=160, marker='*', edgecolors='black', zorder=7, label='Khởi phát Xmin')
-            ax.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=100, edgecolors='black', zorder=7, label='Điểm chủ hiện tại')
+            ax1.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=2.5, marker='o', zorder=3)
+            ax1.scatter(pts_2d[x_min_idx, 0], pts_2d[x_min_idx, 1], color='#f0ad4e', s=140, marker='*', edgecolors='black', zorder=4)
+            ax1.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=90, edgecolors='black', zorder=4)
+            
+        ax1.grid(True, linestyle=':', alpha=0.4)
+        ax1.set_aspect('equal', adjustable='datalim')
+        st.pyplot(fig1)
 
-        ax.set_title("Mô hình đồ họa tổng thể lưới TIN và tập tam giác duyệt biên (Darvis TIN)", fontsize=12, fontweight='bold')
-        ax.grid(True, linestyle=':', alpha=0.4)
-        ax.legend(loc="lower right")
-        ax.set_aspect('equal', adjustable='datalim')
-        st.pyplot(fig)
+        st.markdown("---")
+
+        # ----------------------------------------------------
+        # KHUNG ĐỒ HỌA 2 (PHÍA DƯỚI): PHÓNG TO VÙNG CỤC BỘ (SỐ TO X3)
+        # ----------------------------------------------------
+        st.subheader("🔍 2. Khung Cận Cảnh Điểm Đang Xử Lý")
+        fig2, ax2 = plt.subplots(figsize=(8, 6))
+        
+        # Chỉ tập trung vẽ các tam giác kề liên quan, đánh chữ đỏ số hiệu siêu to (size=26)
+        local_pts_idx = set([curr_pivot])
+        for idx in adjacent_tri_indices:
+            simplex = tri_mesh.simplices[idx]
+            polygon = plt.Polygon(pts_2d[simplex], facecolor='#FFF2CC', edgecolor='#D6B656', linewidth=1.5, alpha=0.9, zorder=1)
+            ax2.add_patch(polygon)
+            for node in simplex:
+                local_pts_idx.add(node)
+            
+            # Đặt cỡ chữ hiệu tam giác 26 màu đỏ rất đậm, có viền trắng rõ rệt
+            centroid_x = np.mean(pts_2d[simplex, 0])
+            centroid_y = np.mean(pts_2d[simplex, 1])
+            ax2.text(centroid_x, centroid_y, f"#{idx}", fontsize=26, color='#CC0000', fontweight='bold',
+                    ha='center', va='center', zorder=2,
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#CC0000', alpha=0.9))
+        
+        # Chỉ hiển thị các đỉnh trong vùng kề cận này
+        local_pts_idx = list(local_pts_idx)
+        if local_pts_idx:
+            ax2.scatter(pts_2d[local_pts_idx, 0], pts_2d[local_pts_idx, 1], color='#0275d8', s=40, zorder=3)
+            for idx in local_pts_idx:
+                p = pts[idx]
+                ax2.text(p[0] + 0.1, p[1] + 0.1, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=10, color='#111111', fontweight='bold', zorder=4)
+        
+        # Đánh dấu điểm chủ hiện tại (Màu xanh lá)
+        ax2.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=130, edgecolors='black', zorder=5)
+        
+        ax2.grid(True, linestyle=':', alpha=0.4)
+        ax2.set_aspect('equal', adjustable='datalim')
+        st.pyplot(fig2)
 
         # --- KẾT XUẤT CAD ---
         st.sidebar.markdown("---")
