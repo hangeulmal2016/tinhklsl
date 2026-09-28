@@ -1,4 +1,4 @@
-import streamlit as str
+import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,16 +6,15 @@ from scipy.spatial import Delaunay
 import ezdxf
 import io
 
-# Set page title and layout
-str.set_page_config(page_title="TIN-Guided Boundary Extractor", layout="wide")
-str.title("🗺️ TIN-Guided Boundary Extractor & DXF Generator")
-str.markdown("Extracts outer boundary layers from raw geodetic point datasets using spatial triangulation guidance.")
+# Cấu hình giao diện trang Web Streamlit
+st.set_page_config(page_title="TIN Boundary WebApp", layout="wide")
+st.title("🗺️ Ứng Dụng Xác Định Đường Bao Chu Vi Địa Hình")
+st.markdown("Xây dựng mạng lưới TIN để xác định tập điểm T cục bộ và quét tìm đường bao theo phương thức hình học.")
 
-# --- HELPER FUNCTIONS FOR GEOMETRY ---
-def parse_raw_text(text_data):
-    """Parses whitespace/tab-separated X Y Z text data safely."""
+def parse_txt_data(text_content):
+    """Đọc dữ liệu từ file văn bản định dạng X Y Z (phân tách bằng Tab hoặc Khoảng trắng)"""
     points = []
-    for line in text_data.strip().split('\n'):
+    for line in text_content.strip().split('\n'):
         parts = line.strip().split()
         if len(parts) >= 2:
             try:
@@ -27,26 +26,48 @@ def parse_raw_text(text_data):
                 continue
     return np.array(points)
 
-def extract_tin_boundary(pts_2d):
+def parse_dxf_data(file_bytes):
+    """Đọc dữ liệu điểm (POINT) hoặc nhãn chữ (TEXT) từ file DXF người dùng tải lên"""
+    points = []
+    try:
+        stream = io.StringIO(file_bytes.decode('utf-8', errors='ignore'))
+        doc = ezdxf.read(stream)
+        msp = doc.modelspace()
+        # Lấy tọa độ từ các đối tượng POINT
+        for entity in msp.query('POINT'):
+            p = entity.dxf.location
+            points.append([p.x, p.y, p.z])
+        # Nếu không có POINT, tìm các đối tượng TEXT (nhãn cao độ)
+        if not points:
+            for entity in msp.query('TEXT'):
+                p = entity.dxf.insert
+                try:
+                    z = float(entity.dxf.text)
+                except ValueError:
+                    z = p.z
+                points.append([p.x, p.y, z])
+    except Exception as e:
+        st.error(f"Lỗi khi đọc cấu trúc file DXF: {e}")
+    return np.array(points)
+def extract_boundary_by_tin(pts_2d):
     """
-    Constructs a TIN mesh to safely identify localized neighborhood sets (T).
-    The true outer boundary consists of edges belonging to exactly ONE triangle.
-    This replaces the brute-force O(n^3) triangle search with a solid O(n log n) framework.
+    Xác định đường bao chu vi thông qua mạng tam giác TIN.
+    Một cạnh thuộc đường bao ngoài cùng khi và chỉ khi nó thuộc về duy nhất 1 tam giác TIN.
     """
     tri = Delaunay(pts_2d)
-    edge_registry = {}
+    edge_counts = {}
     
-    # Track the occurrence frequency of every undirected edge
+    # Đếm số lần xuất hiện của các cạnh trong các tam giác
     for simplex in tri.simplices:
         for i in range(3):
             u, v = simplex[i], simplex[(i + 1) % 3]
             edge = tuple(sorted((u, v)))
-            edge_registry[edge] = edge_registry.get(edge, 0) + 1
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
             
-    # Filter out boundary edges (edges belonging to exactly 1 triangle)
-    boundary_edges = [edge for edge, count in edge_registry.items() if count == 1]
+    # Lọc ra các cạnh biên (chỉ nằm trong đúng 1 tam giác)
+    boundary_edges = [edge for edge, count in edge_counts.items() if count == 1]
     
-    # Build an adjacency graph mapping for boundary walk tracking
+    # Xây dựng ma trận kề (Adjacency Graph) để đi men theo đường biên
     adj_graph = {}
     for u, v in boundary_edges:
         if u not in adj_graph: adj_graph[u] = []
@@ -57,66 +78,61 @@ def extract_tin_boundary(pts_2d):
     if not adj_graph:
         return []
         
-    # Start tracing from X_min as defined in your prompt specifications
+    # Bắt đầu xuất phát từ điểm Xmin (Điểm chủ đầu tiên có giá trị X nhỏ nhất)
     x_min_idx = np.argmin(pts_2d[:, 0])
     
-    boundary_ordered_indices = []
+    boundary_indices = []
     current_node = x_min_idx
     prev_node = None
     
-    # Traverse sequentially until returning safely to X_min
     while True:
-        boundary_ordered_indices.append(current_node)
+        boundary_indices.append(current_node)
         neighbors = adj_graph.get(current_node, [])
         
-        if len(boundary_ordered_indices) > 1 and current_node == x_min_idx:
+        # Nếu đã quay trở lại điểm xuất phát Xmin và tạo thành vòng khép kín
+        if len(boundary_indices) > 1 and current_node == x_min_idx:
             break
             
-        # Select the next node along the perimeter path
         next_node = None
         for n in neighbors:
             if n != prev_node:
-                # If returning home is possible, prioritize closing the loop safely
-                if n == x_min_idx and len(boundary_ordered_indices) > 2:
+                # Ưu tiên khép mạch quay về Xmin nếu hành trình đã đủ dài (> 2 cạnh)
+                if n == x_min_idx and len(boundary_indices) > 2:
                     next_node = n
                     break
-                if n not in boundary_ordered_indices:
+                if n not in boundary_indices:
                     next_node = n
                     break
                     
         if next_node is None:
-            # Fallback path closure catch-all
-            if x_min_idx in neighbors and len(boundary_ordered_indices) > 2:
-                boundary_ordered_indices.append(x_min_idx)
+            if x_min_idx in neighbors and len(boundary_indices) > 2:
+                boundary_indices.append(x_min_idx)
             break
             
         prev_node = current_node
         current_node = next_node
         
-    return boundary_ordered_indices
+    return boundary_indices
 
-def compute_polygon_properties(coords):
-    """Computes total perimeter length and polygon area using the Shoelace formula."""
+def calculate_polygon_metrics(coords):
+    """Tính toán chiều dài chu vi và diện tích khu đất (Công thức Shoelace)"""
     x = coords[:, 0]
     y = coords[:, 1]
-    # Perimeter
     dx = np.diff(x, append=x[0])
     dy = np.diff(y, append=y[0])
     perimeter = np.sum(np.sqrt(dx**2 + dy**2))
-    # Area
     area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
     return perimeter, area
-
-def build_dxf(points, boundary_indices):
-    """Generates standard dual-layer DXF CAD assets matching engineering specs."""
+def export_to_dxf(points, boundary_indices):
+    """Tạo file DXF phân lớp kỹ thuật số gửi về máy người dùng"""
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
     
-    # Layer Definitions
-    doc.layers.new(name='CAODO', color=3)     # Green text layers
-    doc.layers.new(name='BOUNDARY', color=1)  # Red outer lines
+    # Khởi tạo các Layer tiêu chuẩn kèm mã màu sắc phân biệt
+    doc.layers.new(name='CAODO', color=3)     # Lớp chữ cao độ - Màu xanh lá (Green)
+    doc.layers.new(name='BOUNDARY', color=1)  # Lớp đường bao - Màu đỏ (Red)
     
-    # Write Point elevation labels (TEXT elements)
+    # Xuất các điểm dữ liệu dưới dạng TEXT cao độ thực tế
     for p in points:
         msp.add_text(
             text=f"{p[2]:.3f}",
@@ -128,27 +144,25 @@ def build_dxf(points, boundary_indices):
             }
         )
         
-    # Draw Closed Boundary Polyline
+    # Tạo đường đa tuyến khép kín (Closed Polyline) nối chu vi ranh giới
     if len(boundary_indices) > 2:
-        poly_points = [(points[idx][0], points[idx][1], points[idx][2]) for idx in boundary_indices]
-        # Guarantee closure configuration
-        if poly_points[0] != poly_points[-1]:
-            poly_points.append(poly_points[0])
-            
-        msp.add_lwpolyline(
-            points=[(p[0], p[1]) for p in poly_points], 
-            dxfattribs={'layer': 'BOUNDARY', 'flags': 1} # flags=1 implies Closed Polyline
-        )
+        poly_points = [(points[idx][0], points[idx][1]) for idx in boundary_indices]
+        # Thêm flag=1 để ép thuộc tính Đóng (Closed) cho Polyline trong AutoCAD
+        msp.add_lwpolyline(points=poly_points, dxfattribs={'layer': 'BOUNDARY', 'flags': 1})
         
     out_stream = io.StringIO()
     doc.write(out_stream)
     return out_stream.getvalue()
+# --- KHU VỰC ĐIỀU KHIỂN SIDEBAR ---
+st.sidebar.header("📁 Cấu Hình Tập Dữ Liệu")
+file_type = st.sidebar.selectbox("Chọn định dạng file tải lên:", ["File văn bản tọa độ (.TXT)", "File bản vẽ CAD (.DXF)"])
 
-# --- DEFAULT EMBEDDED GEODETIC RAW DATASET ---
-DEFAULT_RAW_DATA = """558154.823	1153935.014	0.679
+uploaded_file = st.sidebar.file_uploader("Tải lên file dữ liệu hình học của bạn", type=["txt", "dxf"])
+
+# Chuỗi dữ liệu mẫu mặc định (Dùng dữ liệu 71 điểm trắc địa của bạn)
+DEFAULT_DATA = """558154.823	1153935.014	0.679
 558153.646	1153940.001	0.54
 558153.714	1153945.897	0.943
-55814.105	1153945.305	0.52
 558162.959	1153946.233	0.438
 558164.454	1153941.043	0.364
 558164.967	1153936.894	0.407
@@ -215,59 +229,69 @@ DEFAULT_RAW_DATA = """558154.823	1153935.014	0.679
 558250.001	1153952.777	-0.035
 558241.464	1153952.073	-0.034
 558229.066	1153950.927	0.001
-558215.796	1153950.39	0.1"""
+558215.796	1153950.39	0.100"""
 
-# --- APPLICATION INTERFACE SIDEBAR ---
-str.sidebar.header("📁 Data Management Options")
-data_source = str.sidebar.radio("Data Import Source:", ("Use Provided Sample Dataset", "Upload Custom TXT File"))
-
-raw_text_content = DEFAULT_RAW_DATA
-if data_source == "Upload Custom TXT File":
-    uploaded_file = str.sidebar.file_uploader("Upload geometry coordinate text file (X Y Z format)", type=["txt", "csv"])
-    if uploaded_file is not None:
-        raw_text_content = uploaded_file.read().decode("utf-8")
-
-# Parse string to working array
-parsed_points = parse_raw_text(raw_text_content)
-
-if len(parsed_points) < 3:
-    str.error("❌ Need a minimum of 3 spatial points to evaluate boundary paths.")
+# Xử lý nạp dữ liệu dựa vào hành động của người dùng
+if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
+    if "DXF" in file_type:
+        pts = parse_dxf_data(file_bytes)
+    else:
+        pts = parse_txt_data(file_bytes.decode("utf-8"))
 else:
-    # --- PROCESSING PIPELINE ---
-    pts_2d = parsed_points[:, :2]
-    boundary_indices = extract_tin_boundary(pts_2d)
+    st.info("ℹ️ Đang hiển thị dữ liệu mẫu trắc địa có sẵn. Hãy tải file của bạn lên Sidebar để cập nhật.")
+    pts = parse_txt_data(DEFAULT_DATA)
+
+# Điều kiện dựng hình đồ thị hình học
+if len(pts) >= 3:
+    pts_2d = pts[:, :2]
+    boundary_idx = extract_boundary_by_tin(pts_2d)
     
-    # Calculate geometric values
-    boundary_coords = pts_2d[boundary_indices]
-    total_perimeter, closed_area = compute_polygon_properties(boundary_coords)
+    # Tính toán thông số kỹ thuật hiển thị dạng thẻ (Metric)
+    p_len, p_area = calculate_polygon_metrics(pts_2d[boundary_idx])
     
-    # --- METRICS INDICATORS DISPLAY ---
-    col1, col2, col3 = str.columns(3)
-    col1.metric("📊 Total Sample Points", len(parsed_points))
-    col2.metric("📏 Perimeter Length", f"{total_perimeter:.3f} m")
-    col3.metric("📐 Enclosed Surface Area", f"{closed_area:.3f} m²")
+    m_col1, m_col2, m_col3 = st.columns(3)
+    m_col1.metric("📌 Số lượng điểm", len(pts))
+    m_col2.metric("📏 Chiều dài chu vi", f"{p_len:.2f} m")
+    m_col3.metric("📐 Diện tích vùng bao", f"{p_area:.2f} m²")
     
-    # --- DATA PRESENTATION VIEWPORTS ---
-    view_tab, data_tab = str.tabs(["👁️ Interactive Geometry View", "📋 Parsed Raw Table Data"])
+    # --- ĐỒ HỌA TRỰC QUAN VỚI MATPLOTLIB ---
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    with view_tab:
-        fig, ax = plt.subplots(figsize=(10, 6.5))
+    # Vẽ các đường nối tam giác TIN mờ phía dưới làm nền
+    tri_mesh = Delaunay(pts_2d)
+    ax.triplot(pts_2d[:, 0], pts_2d[:, 1], tri_mesh.simplices, color='#E0E0E0', linewidth=0.7, linestyle='--')
+    
+    # Biểu diễn cụm điểm
+    ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#007acc', s=20, zorder=3, label='Điểm dữ liệu')
+    
+    # Hiển thị text nhãn cao độ thực tế
+    for p in pts:
+        ax.text(p[0] + 0.3, p[1] + 0.3, f"{p[2]:.2f}", fontsize=7, color='#555555')
         
-        # Plot full internal TIN triangulation wireframe transparently for visual alignment
-        tri = Delaunay(pts_2d)
-        ax.triplot(pts_2d[:, 0], pts_2d[:, 1], tri.simplices, color='#CCCCCC', linewidth=0.6, linestyle='--', label='TIN Internal Links')
+    # Vẽ đường bao chu vi màu đỏ
+    if len(boundary_idx) > 0:
+        loop_idx = boundary_idx + [boundary_idx[0]]
+        ax.plot(pts_2d[loop_idx, 0], pts_2d[loop_idx, 1], color='#FF3333', linewidth=2, zorder=4, label='Đường bao (Boundary)')
+        # Đánh dấu điểm chủ Xmin bằng ngôi sao màu vàng
+        ax.scatter(pts_2d[boundary_idx[0], 0], pts_2d[boundary_idx[0], 1], color='#FFCC00', s=100, marker='*', edgecolors='black', zorder=5, label='Điểm chủ Xmin')
         
-        # Plot geodetic target nodes
-        ax.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#1f77b4', s=18, zorder=3, label='Geodetic Points')
-        
-        # Overlay Elevation value text offset strings
-        for p in parsed_points:
-            ax.text(p[0] + 0.3, p[1] + 0.3, f"{p[2]:.2f}", fontsize=7, color='#2c3e50', alpha=0.85)
-            
-        # Highlight boundary nodes and closed path lines
-        if len(boundary_indices) > 0:
-            closed_loop_idx = boundary_indices + [boundary_indices[0]]
-            ax.plot(pts_2d[closed_loop_idx, 0], pts_2d[closed_loop_idx, 1], color='#e74c3c', linewidth=2, zorder=4, label='Calculated Boundary Loop')
-            
-            # Anchor start position indicator label
-            x_min_pt = pts_2d[boundary_indices[0]]
+    ax.set_title("Sơ Đồ Phân Bố Điểm Và Đường Bao Chu Vi", fontsize=11, fontweight='bold')
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.legend(loc="lower right")
+    ax.set_aspect('equal', 'dataclim')
+    st.pyplot(fig)
+    
+    # --- XUẤT FILE DXF VỀ MÁY ---
+    dxf_data = export_to_dxf(pts, boundary_idx)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💾 Kết Xuất Bản Vẽ CAD")
+    st.sidebar.download_button(
+        label="📥 Tải xuống file DXF kết quả",
+        data=dxf_data,
+        file_name="ranh_gioi_boundary.dxf",
+        mime="application/dxf",
+        use_container_width=True
+    )
+else:
+    st.error("❌ Tệp dữ liệu không hợp lệ hoặc số lượng điểm tọa độ ít hơn 3. Vui lòng kiểm tra lại cấu trúc file.")
