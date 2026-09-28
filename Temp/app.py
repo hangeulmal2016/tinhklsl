@@ -23,17 +23,18 @@ def parse_txt_large(file_bytes):
     data = io.BytesIO(file_bytes)
     df = pd.read_csv(data, sep=r'[,\s\t]+', engine='python', header=None)
     
-    # Chuẩn hóa nếu có thêm cột tên điểm ở đầu
-    if df.shape >= 4:
+    # SỬA LỖI TẠI ĐÂY: Thay df.shape thành df.shape[1] để lấy đúng số lượng CỘT
+    if df.shape[1] >= 4:
         df = df.iloc[:, 1:4]
-    elif df.shape == 2:
-        df = 0.0  # Bổ sung cao độ mặc định nếu chỉ có X, Y
+    elif df.shape[1] == 2:
+        df[2] = 0.0  # Bổ sung cao độ mặc định nếu chỉ có X, Y
         
     df.columns = ['X', 'Y', 'Z']
     df['X'] = pd.to_numeric(df['X'], errors='coerce')
     df['Y'] = pd.to_numeric(df['Y'], errors='coerce')
     df['Z'] = pd.to_numeric(df['Z'], errors='coerce').fillna(0.0)
     return df.dropna(subset=['X', 'Y'])
+
 
 def compute_tin_and_boundary(df):
     """Tính toán lưới tam giác TIN (Delaunay) và thuật toán dò đường chu vi Boundary"""
