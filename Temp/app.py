@@ -31,12 +31,16 @@ def parse_txt_data(text_content):
         parts = line.strip().split()
         if len(parts) >= 2:
             try:
-                x = float(parts)
-                y = float(parts)
-                z = float(parts) if len(parts) > 2 else 0.0
+                # ĐÃ FIX: Chỉ định đúng chỉ số index từng cột, [1], [2] để chuyển đổi dữ liệu
+                x = float(parts[0])
+                y = float(parts[1])
+                z = float(parts[2]) if len(parts) > 2 else 0.0
                 points.append((x, y, z))
             except ValueError:
                 continue
+    # Loại bỏ điểm thừa trùng lặp (Duplicate Elimination) bằng Pandas
+    if not points:
+        return np.array([])
     df_pts = pd.DataFrame(points, columns=['x', 'y', 'z']).drop_duplicates(subset=['x', 'y'])
     return df_pts.to_numpy()
 
@@ -58,6 +62,8 @@ def parse_dxf_data(file_bytes):
                 points.append((p.x, p.y, z))
     except Exception as e:
         st.error(f"Lỗi đọc định dạng cấu trúc DXF: {e}")
+    if not points:
+        return np.array([])
     df_pts = pd.DataFrame(points, columns=['x', 'y', 'z']).drop_duplicates(subset=['x', 'y'])
     return df_pts.to_numpy()
 def get_polygon_properties(coords):
