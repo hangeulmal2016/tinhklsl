@@ -31,9 +31,9 @@ def parse_txt_data(text_content):
         parts = line.strip().split()
         if len(parts) >= 2:
             try:
-                x = float(parts[0])
-                y = float(parts[1])
-                z = float(parts[2]) if len(parts) > 2 else 0.0
+                x = float(parts)
+                y = float(parts)
+                z = float(parts) if len(parts) > 2 else 0.0
                 points.append((x, y, z))
             except ValueError:
                 continue
@@ -78,19 +78,20 @@ def generate_cad_dxf(points, boundary_indices):
     doc.layers.add(name='CAODO', color=3)     # Lớp chữ nhãn cao độ - Màu xanh lá
     doc.layers.add(name='BOUNDARY', color=1)  # Lớp nét polyline biên ranh giới - Màu đỏ
     
+    # ĐÃ ĐIỀU CHỈNH X2: Tăng chiều cao nhãn chữ cao độ trong CAD từ 0.4 lên 0.8
     for p in points:
         msp.add_text(
-            text=f"{p[2]:.3f}",
+            text=f"{p:.3f}",
             dxfattribs={
                 'layer': 'CAODO',
-                'height': 0.4,
-                'insert': (p[0], p[1], p[2]),
+                'height': 0.8,
+                'insert': (p, p, p),
                 'style': 'Standard'
             }
         )
         
     if len(boundary_indices) > 2:
-        poly_points = [(points[idx][0], points[idx][1]) for idx in boundary_indices]
+        poly_points = [(points[idx], points[idx]) for idx in boundary_indices]
         msp.add_lwpolyline(points=poly_points, dxfattribs={'layer': 'BOUNDARY', 'flags': 1})
         
     out_stream = io.StringIO()
@@ -136,10 +137,9 @@ else:
                     if node != curr_pivot:
                         adjacent_nodes.add(int(node))
 
-        # --- BẢNG ĐIỀU KHIỂN ĐƯỢC THIẾT KẾ CO GIÃN THEO CHIỀU DỌC ĐIỆN THOẠI ---
+        # --- BẢNG ĐIỀU KHIỂN CHIỀU DỌC MOBILE ---
         st.subheader("🕹️ Bảng Điều Khiển Ranh Giới")
-        
-        st.markdown(f"📍 **Điểm chủ hiện tại:** Đỉnh `#{curr_pivot}` (X: {pts[curr_pivot][0]:.2f}, Y: {pts[curr_pivot][1]:.2f})")
+        st.markdown(f"📍 **Điểm chủ hiện tại:** Đỉnh `#{curr_pivot}` (X: {pts[curr_pivot]:.2f}, Y: {pts[curr_pivot]:.2f})")
         
         available_options = sorted(list(adjacent_nodes))
         next_chosen_node = st.selectbox("Chọn đỉnh tiếp theo nằm trên Boundary:", available_options)
@@ -154,8 +154,8 @@ else:
             else:
                 st.warning("Đỉnh này đã tồn tại trong chuỗi ranh giới trước đó.")
         if adjacent_tri_indices:
-            tri_to_ignore = st.selectbox("Chọn Mã số Tam giác muốn loại bỏ khỏi lưới:", adjacent_tri_indices, format_func=lambda i: f"Tam giác số #{i}")
-            if st.button("❌ Loại bỏ tam giác này khỏi lưới", use_container_width=True):
+            tri_to_ignore = st.selectbox("Chọn Tam giác muốn ẩn để định hướng Boundary:", adjacent_tri_indices, format_func=lambda i: f"Tam giác số #{i}")
+            if st.button("❌ Ẩn tam giác này để lọc tập T", use_container_width=True):
                 st.session_state.ignored_triangles.add(tri_to_ignore)
                 st.rerun()
         else:
@@ -185,16 +185,14 @@ else:
         st.subheader("🌐 1. Khung Đồ Họa Tổng Thể Lưới TIN")
         fig1, ax1 = plt.subplots(figsize=(8, 6))
         
-        # Vẽ toàn bộ lưới TIN nền dạng nét liền màu xám rõ ràng
         for idx, simplex in enumerate(tri_mesh.simplices):
             if idx in st.session_state.ignored_triangles:
-                continue
-            ax1.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#B0B0B0', linewidth=0.9, linestyle='-', zorder=1)
+                ax1.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#E0E0E0', linewidth=0.6, linestyle=':', alpha=0.3, zorder=1)
+            else:
+                ax1.plot(pts_2d[simplex, 0], pts_2d[simplex, 1], color='#B0B0B0', linewidth=0.9, linestyle='-', zorder=1)
             
-        # Điểm trắc địa
         ax1.scatter(pts_2d[:, 0], pts_2d[:, 1], color='#0275d8', s=25, zorder=2)
         
-        # Tuyến đường bao đang được vẽ
         if len(st.session_state.manual_boundary) > 0:
             active_idx = st.session_state.manual_boundary
             ax1.plot(pts_2d[active_idx, 0], pts_2d[active_idx, 1], color='#d9534f', linewidth=2.5, marker='o', zorder=3)
@@ -208,12 +206,11 @@ else:
         st.markdown("---")
 
         # ----------------------------------------------------
-        # KHUNG ĐỒ HỌA 2 (PHÍA DƯỚI): PHÓNG TO VÙNG CỤC BỘ (SỐ TO X3)
+        # KHUNG ĐỒ HỌA 2 (PHÍA DƯỚI): PHÓNG TO VÙNG CỤC BỘ (CHỮ ĐIỂM X2)
         # ----------------------------------------------------
         st.subheader("🔍 2. Khung Cận Cảnh Điểm Đang Xử Lý")
         fig2, ax2 = plt.subplots(figsize=(8, 6))
         
-        # Chỉ tập trung vẽ các tam giác kề liên quan, đánh chữ đỏ số hiệu siêu to (size=26)
         local_pts_idx = set([curr_pivot])
         for idx in adjacent_tri_indices:
             simplex = tri_mesh.simplices[idx]
@@ -222,22 +219,20 @@ else:
             for node in simplex:
                 local_pts_idx.add(node)
             
-            # Đặt cỡ chữ hiệu tam giác 26 màu đỏ rất đậm, có viền trắng rõ rệt
             centroid_x = np.mean(pts_2d[simplex, 0])
             centroid_y = np.mean(pts_2d[simplex, 1])
             ax2.text(centroid_x, centroid_y, f"#{idx}", fontsize=26, color='#CC0000', fontweight='bold',
                     ha='center', va='center', zorder=2,
                     bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFFFFF', edgecolor='#CC0000', alpha=0.9))
         
-        # Chỉ hiển thị các đỉnh trong vùng kề cận này
         local_pts_idx = list(local_pts_idx)
         if local_pts_idx:
             ax2.scatter(pts_2d[local_pts_idx, 0], pts_2d[local_pts_idx, 1], color='#0275d8', s=40, zorder=3)
+            # ĐÃ ĐIỀU CHỈNH X2: Tăng cỡ chữ hiển thị thông tin điểm trên biểu đồ từ 8 lên 16
             for idx in local_pts_idx:
                 p = pts[idx]
-                ax2.text(p[0] + 0.1, p[1] + 0.1, f"Z:{p[2]:.2f}\n(#{idx})", fontsize=10, color='#111111', fontweight='bold', zorder=4)
+                ax2.text(p + 0.1, p + 0.1, f"Z:{p:.2f}\n(#{idx})", fontsize=16, color='#111111', fontweight='bold', zorder=4)
         
-        # Đánh dấu điểm chủ hiện tại (Màu xanh lá)
         ax2.scatter(pts_2d[curr_pivot, 0], pts_2d[curr_pivot, 1], color='#5cb85c', s=130, edgecolors='black', zorder=5)
         
         ax2.grid(True, linestyle=':', alpha=0.4)
